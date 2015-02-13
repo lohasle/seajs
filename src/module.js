@@ -180,7 +180,7 @@ Module.prototype.exec = function () {
   function require(id) {
     var m = mod.deps[id] || Module.get(require.resolve(id))
     if (m.status == STATUS.ERROR) {
-      throw new Error('module was broken: ' + m.uri);
+      throw new Error('module was broken: ' + m.uri)
     }
     return m.exec()
   }
@@ -248,7 +248,8 @@ Module.prototype.fetch = function(requestCache) {
     uri: uri,
     requestUri: requestUri,
     onRequest: onRequest,
-    charset: isFunction(data.charset) ? data.charset(requestUri) || 'utf-8' : data.charset
+    charset: isFunction(data.charset) ? data.charset(requestUri) : data.charset,
+    crossorigin: isFunction(data.crossorigin) ? data.crossorigin(requestUri) : data.crossorigin
   })
 
   if (!emitData.requested) {
@@ -258,7 +259,7 @@ Module.prototype.fetch = function(requestCache) {
   }
 
   function sendRequest() {
-    seajs.request(emitData.requestUri, emitData.onRequest, emitData.charset)
+    seajs.request(emitData.requestUri, emitData.onRequest, emitData.charset, emitData.crossorigin)
   }
 
   function onRequest(error) {
@@ -331,7 +332,7 @@ Module.define = function (id, deps, factory) {
   }
 
   // Try to derive uri in IE6-9 for anonymous modules
-  if (!meta.uri && doc.attachEvent && typeof getCurrentScript !== "undefined") {
+  if (!isWebWorker && !meta.uri && doc.attachEvent && typeof getCurrentScript !== "undefined") {
     var script = getCurrentScript()
 
     if (script) {

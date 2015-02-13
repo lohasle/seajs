@@ -80,7 +80,7 @@ seajs.off = function(name, callback) {
 // Emit event, firing all bound callbacks. Callbacks receive the same
 // arguments as `emit` does, apart from the event name
 var emit = seajs.emit = function(name, data) {
-  var list = events[name], fn
+  var list = events[name]
 
   if (list) {
     // Copy callback lists to prevent modification
@@ -94,7 +94,6 @@ var emit = seajs.emit = function(name, data) {
 
   return seajs
 }
-
 
 /**
  * util-path.js - The utilities for operating path such as id, uri
@@ -256,107 +255,186 @@ function id2Uri(id, refUri) {
   return uri
 }
 
+// For Developers
+seajs.resolve = id2Uri;
 
-var doc = document
-var cwd = (!location.href || location.href.indexOf('about:') === 0) ? '' : dirname(location.href)
-var scripts = doc.scripts
+// Check environment
+var isWebWorker = typeof window === 'undefined' && typeof importScripts !== 'undefined' && isFunction(importScripts);
 
-// Recommend to add `seajsnode` id for the `sea.js` script element
-var loaderScript = doc.getElementById("seajsnode") ||
+// Ignore about:xxx and blob:xxx
+var IGNORE_LOCATION_RE = /^(about|blob):/;
+var loaderDir;
+// Sea.js's full path
+var loaderPath;
+// Location is read-only from web worker, should be ok though
+var cwd = (!location.href || IGNORE_LOCATION_RE.test(location.href)) ? '' : dirname(location.href);
+
+if (isWebWorker) {
+  // Web worker doesn't create DOM object when loading scripts
+  // Get sea.js's path by stack trace.
+  var stack;
+  try {
+    var up = new Error();
+    throw up;
+  } catch (e) {
+    // IE won't set Error.stack until thrown
+    stack = e.stack.split('\n');
+  }
+  // First line is 'Error'
+  stack.shift();
+
+  var m;
+  // Try match `url:row:col` from stack trace line. Known formats:
+  // Chrome:  '    at http://localhost:8000/script/sea-worker-debug.js:294:25'
+  // FireFox: '@http://localhost:8000/script/sea-worker-debug.js:1082:1'
+  // IE11:    '   at Anonymous function (http://localhost:8000/script/sea-worker-debug.js:295:5)'
+  // Don't care about older browsers since web worker is an HTML5 feature
+  var TRACE_RE = /.*?((?:http|https|file)(?::\/{2}[\w]+)(?:[\/|\.]?)(?:[^\s"]*)).*?/i
+  // Try match `url` (Note: in IE there will be a tailing ')')
+  var URL_RE = /(.*?):\d+:\d+\)?$/;
+  // Find url of from stack trace.
+  // Cannot simply read the first one because sometimes we will get:
+  // Error
+  //  at Error (native) <- Here's your problem
+  //  at http://localhost:8000/_site/dist/sea.js:2:4334 <- What we want
+  //  at http://localhost:8000/_site/dist/sea.js:2:8386
+  //  at http://localhost:8000/_site/tests/specs/web-worker/worker.js:3:1
+  while (stack.length > 0) {
+    var top = stack.shift();
+    m = TRACE_RE.exec(top);
+    if (m != null) {
+      break;
+    }
+  }
+  var url;
+  if (m != null) {
+    // Remove line number and column number
+    // No need to check, can't be wrong at this point
+    var url = URL_RE.exec(m[1])[1];
+  }
+  // Set
+  loaderPath = url
+  // Set loaderDir
+  loaderDir = dirname(url || cwd);
+  // This happens with inline worker.
+  // When entrance script's location.href is a blob url,
+  // cwd will not be available.
+  // Fall back to loaderDir.
+  if (cwd === '') {
+    cwd = loaderDir;
+  }
+}
+else {
+  var doc = document
+  var scripts = doc.scripts
+
+  // Recommend to add `seajsnode` id for the `sea.js` script element
+  var loaderScript = doc.getElementById("seajsnode") ||
     scripts[scripts.length - 1]
 
-// When `sea.js` is inline, set loaderDir to current working directory
-var loaderDir = dirname(getScriptAbsoluteSrc(loaderScript) || cwd)
-
-function getScriptAbsoluteSrc(node) {
-  return node.hasAttribute ? // non-IE6/7
+  function getScriptAbsoluteSrc(node) {
+    return node.hasAttribute ? // non-IE6/7
       node.src :
-    // see http://msdn.microsoft.com/en-us/library/ms536429(VS.85).aspx
+      // see http://msdn.microsoft.com/en-us/library/ms536429(VS.85).aspx
       node.getAttribute("src", 4)
+  }
+  loaderPath = getScriptAbsoluteSrc(loaderScript)
+  // When `sea.js` is inline, set loaderDir to current working directory
+  loaderDir = dirname(loaderPath || cwd)
 }
-
-
-// For Developers
-seajs.resolve = id2Uri
-
 
 /**
  * util-request.js - The utilities for requesting script and style files
  * ref: tests/research/load-js-css/test.html
  */
-
-var head = doc.head || doc.getElementsByTagName("head")[0] || doc.documentElement
-var baseElement = head.getElementsByTagName("base")[0]
-
-var currentlyAddingScript
-var interactiveScript
-
-function request(url, callback, charset) {
-  var node = doc.createElement("script")
-
-  if (charset) {
-    var cs = isFunction(charset) ? charset(url) : charset
-    if (cs) {
-      node.charset = cs
+if (isWebWorker) {
+  function requestFromWebWorker(url, callback, charset) {
+    // Load with importScripts
+    var error;
+    try {
+      importScripts(url);
+    } catch (e) {
+      error = e;
     }
+    callback(error);
   }
-
-  addOnload(node, callback, url)
-
-  node.async = true
-  node.src = url
-
-  // For some cache cases in IE 6-8, the script executes IMMEDIATELY after
-  // the end of the insert execution, so use `currentlyAddingScript` to
-  // hold current node, for deriving url in `define` call
-  currentlyAddingScript = node
-
-  // ref: #185 & http://dev.jquery.com/ticket/2709
-  baseElement ?
-      head.insertBefore(node, baseElement) :
-      head.appendChild(node)
-
-  currentlyAddingScript = null
+  // For Developers
+  seajs.request = requestFromWebWorker;
 }
+else {
+  var doc = document
+  var head = doc.head || doc.getElementsByTagName("head")[0] || doc.documentElement
+  var baseElement = head.getElementsByTagName("base")[0]
 
-function addOnload(node, callback, url) {
-  var supportOnload = "onload" in node
+  var currentlyAddingScript
 
-  if (supportOnload) {
-    node.onload = onload
-    node.onerror = function() {
-      emit("error", { uri: url, node: node })
-      onload(true)
-    }
-  }
-  else {
-    node.onreadystatechange = function() {
-      if (/loaded|complete/.test(node.readyState)) {
-        onload()
+  function request(url, callback, charset) {
+    var node = doc.createElement("script")
+
+    if (charset) {
+      var cs = isFunction(charset) ? charset(url) : charset
+      if (cs) {
+        node.charset = cs
       }
     }
+
+    addOnload(node, callback, url)
+
+    node.async = true
+    node.src = url
+
+    // For some cache cases in IE 6-8, the script executes IMMEDIATELY after
+    // the end of the insert execution, so use `currentlyAddingScript` to
+    // hold current node, for deriving url in `define` call
+    currentlyAddingScript = node
+
+    // ref: #185 & http://dev.jquery.com/ticket/2709
+    baseElement ?
+        head.insertBefore(node, baseElement) :
+        head.appendChild(node)
+
+    currentlyAddingScript = null
   }
 
-  function onload(error) {
-    // Ensure only run once and handle memory leak in IE
-    node.onload = node.onerror = node.onreadystatechange = null
+  function addOnload(node, callback, url) {
+    var supportOnload = "onload" in node
 
-    // Remove the script to reduce memory leak
-    if (!data.debug) {
-      head.removeChild(node)
+    if (supportOnload) {
+      node.onload = onload
+      node.onerror = function() {
+        emit("error", { uri: url, node: node })
+        onload(true)
+      }
+    }
+    else {
+      node.onreadystatechange = function() {
+        if (/loaded|complete/.test(node.readyState)) {
+          onload()
+        }
+      }
     }
 
-    // Dereference the node
-    node = null
+    function onload(error) {
+      // Ensure only run once and handle memory leak in IE
+      node.onload = node.onerror = node.onreadystatechange = null
 
-    callback(error)
+      // Remove the script to reduce memory leak
+      if (!data.debug) {
+        head.removeChild(node)
+      }
+
+      // Dereference the node
+      node = null
+
+      callback(error)
+    }
   }
+
+  // For Developers
+  seajs.request = request
+
 }
-
-
-// For Developers
-seajs.request = request
-
+var interactiveScript
 
 function getCurrentScript() {
   if (currentlyAddingScript) {
@@ -382,7 +460,6 @@ function getCurrentScript() {
     }
   }
 }
-
 
 /**
  * util-deps.js - The parser for dependencies
@@ -540,7 +617,7 @@ function parseDependencies(s) {
       index += r.length - 2
     }
     else {
-      index += /^[\w$.\s]+/.exec(s2)[0].length - 1
+      index += /^[\w$]+(?:\s*\.\s*[\w$]+)*/.exec(s2)[0].length - 1
     }
   }
   function isNumber() {
@@ -777,9 +854,9 @@ Module.prototype.exec = function () {
   mod.status = STATUS.EXECUTED
 
   // Emit `exec` event
-  emit("exec", mod.exports)
+  emit("exec", mod)
 
-  return exports
+  return mod.exports
 }
 
 // Fetch a module
@@ -896,7 +973,7 @@ Module.define = function (id, deps, factory) {
   }
 
   // Try to derive uri in IE6-9 for anonymous modules
-  if (!meta.uri && doc.attachEvent && typeof getCurrentScript !== "undefined") {
+  if (!isWebWorker && !meta.uri && doc.attachEvent && typeof getCurrentScript !== "undefined") {
     var script = getCurrentScript()
 
     if (script) {
@@ -991,7 +1068,6 @@ seajs.require = function(id) {
   return mod.exports
 }
 
-
 /**
  * config.js - The configuration for the loader
  */
@@ -1001,6 +1077,9 @@ data.base = loaderDir
 
 // The loader directory
 data.dir = loaderDir
+
+// The loader's full path
+data.loader = loaderPath
 
 // The current working directory
 data.cwd = cwd

@@ -8,11 +8,19 @@ data.base = loaderDir
 // The loader directory
 data.dir = loaderDir
 
+// The loader's full path
+data.loader = loaderPath
+
 // The current working directory
 data.cwd = cwd
 
 // The charset for requesting files
 data.charset = "utf-8"
+
+// @Retention(RetentionPolicy.SOURCE)
+// The CORS options, Do't set CORS on default.
+//
+//data.crossorigin = undefined
 
 // data.alias - An object containing shorthands of module id
 // data.paths - An object containing path shorthands in module id

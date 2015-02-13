@@ -1,3 +1,5 @@
+var interactiveScript
+
 function getCurrentScript() {
   if (currentlyAddingScript) {
     return currentlyAddingScript
@@ -22,4 +24,3 @@ function getCurrentScript() {
     }
   }
 }
-
